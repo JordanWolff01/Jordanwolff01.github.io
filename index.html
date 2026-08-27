@@ -285,6 +285,10 @@
     font-size: 13px; font-weight: 600;
     padding: 9px 12px; border-radius: 3px; flex: 1;
   }
+  #sketchesDataWarning {
+    margin: 0; padding: 8px 14px 0;
+    font-size: 12px; color: var(--danger); line-height: 1.35;
+  }
   #exportBtn { border: none; background: var(--blue); color: var(--white); }
   #deleteAllBtn { border: 1px solid var(--danger); background: var(--white); color: var(--danger); }
   #sketchesList { flex: 1; overflow-y: auto; padding: 12px; }
@@ -339,6 +343,30 @@
   #modalActions button { font-size: 14px; font-weight: 600; padding: 8px 14px; border-radius: 3px; }
   #modalCancel { border: 1px solid var(--blue-line); background: var(--paper); color: var(--ink); }
   #modalConfirm { border: none; background: var(--danger); color: var(--white); }
+
+  #privateModeOverlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(33,42,56,0.55);
+    z-index: 60; align-items: center; justify-content: center; padding: 24px;
+  }
+  #privateModeOverlay.open { display: flex; }
+  #privateModeBox {
+    background: var(--white); border: 1px solid var(--danger);
+    border-radius: 4px; padding: 20px 20px 16px; max-width: 320px; width: 100%;
+    box-shadow: 0 12px 30px rgba(33,42,56,0.35);
+  }
+  #privateModeLabel {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
+    color: var(--danger); text-transform: uppercase; margin-bottom: 8px;
+  }
+  #privateModeMessage { font-size: 15px; color: var(--ink); margin-bottom: 18px; line-height: 1.4; font-weight: 600; }
+  #privateModeActions { display: flex; justify-content: flex-end; }
+  #privateModeOkBtn {
+    font-size: 14px; font-weight: 600; padding: 8px 16px; border-radius: 3px;
+    border: none; background: var(--danger); color: var(--white);
+  }
+
 
   #clearOverlay {
     display: none;
@@ -585,6 +613,7 @@
       </div>
     </div>
   </div>
+  <p id="sketchesDataWarning">Sketches will be lost if browsing data (browser cache) is deleted!</p>
   <div id="sketchesActions">
     <button id="exportBtn">Export All (CSV)</button>
     <button id="deleteAllBtn">Delete All</button>
@@ -629,6 +658,16 @@
   </div>
 </div>
 
+<div id="privateModeOverlay">
+  <div id="privateModeBox">
+    <div id="privateModeLabel">Warning</div>
+    <p id="privateModeMessage">Sketches will disappear when this website is closed when in Incognito or Private mode!!</p>
+    <div id="privateModeActions">
+      <button id="privateModeOkBtn">OK</button>
+    </div>
+  </div>
+</div>
+
 <div id="manualOverlay">
   <div id="manualBox">
     <div id="manualHeader">
@@ -637,7 +676,7 @@
     </div>
     <div id="manualContent">
       <h4>Data</h4>
-      <p>Everything is stored locally on your device only. Use Export All to back up.</p>
+      <p>Everything is stored locally on your device only. Use Export All to back up. Sketches are lost if browsing data is cleared, or when the site is closed in Incognito/Private mode (a warning shows automatically if detected).</p>
       <h4>Drawing</h4>
       <ul>
         <li>Tap the number field (auto-clears), type a length, tap a direction arrow.</li>
@@ -2049,6 +2088,48 @@
       console.warn("Service worker registration failed:", e);
     });
   }
+
+  // Private/incognito browsing warning. There's no official API for this,
+  // so it's a best-effort heuristic: private sessions typically report a
+  // much smaller storage quota, and Firefox private windows block
+  // IndexedDB outright.
+  function detectPrivateMode() {
+    return new Promise(function (resolve) {
+      if (navigator.storage && navigator.storage.estimate) {
+        navigator.storage.estimate().then(function (est) {
+          if (typeof est.quota === "number" && est.quota > 0 && est.quota < 120 * 1024 * 1024) {
+            resolve(true);
+            return;
+          }
+          checkIndexedDb();
+        }).catch(checkIndexedDb);
+      } else {
+        checkIndexedDb();
+      }
+      function checkIndexedDb() {
+        try {
+          if (!window.indexedDB) { resolve(true); return; }
+          var req = indexedDB.open("__sketch_helper_pm_test__");
+          req.onerror = function () { resolve(true); };
+          req.onsuccess = function () {
+            try { req.result.close(); indexedDB.deleteDatabase("__sketch_helper_pm_test__"); } catch (e) {}
+            resolve(false);
+          };
+        } catch (e) {
+          resolve(true);
+        }
+      }
+    });
+  }
+
+  var privateModeOverlay = document.getElementById("privateModeOverlay");
+  var privateModeOkBtn = document.getElementById("privateModeOkBtn");
+  privateModeOkBtn.addEventListener("click", function () {
+    privateModeOverlay.classList.remove("open");
+  });
+  detectPrivateMode().then(function (isPrivate) {
+    if (isPrivate) privateModeOverlay.classList.add("open");
+  });
 })();
 </script>
 </body>
