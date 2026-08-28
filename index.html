@@ -687,7 +687,7 @@
       <h4>Voice Commands</h4>
       <ul>
         <li>Mic button appears only if your browser supports it (not iPhone Safari).</li>
-        <li>Say: "10 up", "25 upright", "12 down left", "undo", "new line", "circle" / "circle up" / "circle down", "snap on/off", "arc on/off", "save".</li>
+        <li>Say: "10 up", "25 upright", "12 down left", "undo", "new line", "circle" / "circle up" or "up circle" / "circle down" or "down circle", "snap on/off", "arc on/off", "save", "stop" (turns off listening).</li>
       </ul>
       <h4>Snap to Grid (on by default)</h4>
       <ul>
@@ -1616,8 +1616,8 @@
     return { n: n, dir: dir };
   }
 
-  var VOICE_UP_PHRASES = ["semicircle up", "semi circle up", "half circle up", "circle up"];
-  var VOICE_DOWN_PHRASES = ["semicircle down", "semi circle down", "half circle down", "circle down"];
+  var VOICE_UP_PHRASES = ["semicircle up", "semi circle up", "half circle up", "circle up", "up circle", "up half circle", "up semicircle", "up semi circle"];
+  var VOICE_DOWN_PHRASES = ["semicircle down", "semi circle down", "half circle down", "circle down", "down circle", "down half circle", "down semicircle", "down semi circle"];
   var VOICE_SEMI_PHRASES = ["semicircle", "semi circle", "half circle", "circle", "flip circle"];
   var VOICE_SNAP_ON_PHRASES = ["snap to grid on", "snap on"];
   var VOICE_SNAP_OFF_PHRASES = ["snap to grid off", "snap off"];
@@ -1629,6 +1629,11 @@
     // strip trailing punctuation speech recognizers sometimes add
     var text = transcript.toLowerCase().trim().replace(/[.,!?]+$/, "");
 
+    if (text === "stop") {
+      stopListening();
+      showToast("Voice commands off");
+      return;
+    }
     if (/\bundo\b/.test(text)) {
       if (undoBtn.disabled) {
         showToast("Nothing to undo");
