@@ -181,14 +181,25 @@
   }
   #arcBtnRow button:disabled { background: var(--paper-dark); color: var(--ink-soft); border-color: var(--blue-line); }
 
+  #micBugRow { display: flex; gap: 4px; }
+  #micBugRow button {
+    flex: 1; min-width: 0;
+    font-size: 11px;
+    padding: 8px 4px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    line-height: 1.15;
+  }
   #micBtn {
     border: 1px solid var(--blue-deep);
     background: var(--paper); color: var(--blue-deep);
-    margin-top: 2px;
   }
   #micBtn.listening {
     background: var(--danger); border-color: var(--danger); color: var(--white);
     animation: micPulse 1.4s ease-in-out infinite;
+  }
+  #reportBugBtn {
+    border: 1px solid var(--brass);
+    background: var(--paper); color: var(--brass);
   }
   @keyframes micPulse {
     0%, 100% { opacity: 1; }
@@ -367,6 +378,41 @@
     border: none; background: var(--danger); color: var(--white);
   }
 
+  #bugOverlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(33,42,56,0.55);
+    z-index: 55; align-items: center; justify-content: center; padding: 24px;
+  }
+  #bugOverlay.open { display: flex; }
+  #bugBox {
+    background: var(--white); border: 1px solid var(--blue-line);
+    border-radius: 4px; padding: 20px; max-width: 380px; width: 100%;
+    box-shadow: 0 12px 30px rgba(33,42,56,0.35);
+  }
+  #bugHeader { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  #bugLabel {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em;
+    color: var(--brass); text-transform: uppercase;
+  }
+  #bugCloseBtn {
+    font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 3px;
+    border: 1px solid var(--blue-line); background: var(--paper); color: var(--ink);
+    flex-shrink: 0;
+  }
+  #bugHint { font-size: 13px; color: var(--ink-soft); margin: 0 0 10px; line-height: 1.4; }
+  #bugTextarea {
+    width: 100%; height: 120px;
+    font-family: var(--sans); font-size: 14px;
+    border: 1px solid var(--blue-line); border-radius: 3px;
+    padding: 8px; resize: none; background: var(--paper); color: var(--ink);
+  }
+  #bugActions { display: flex; justify-content: flex-end; margin-top: 12px; }
+  #bugSendBtn {
+    font-size: 14px; font-weight: 600; padding: 8px 16px; border-radius: 3px;
+    border: none; background: var(--brass); color: var(--white);
+  }
+
 
   #clearOverlay {
     display: none;
@@ -530,7 +576,10 @@
         <button id="undoBtn">Undo</button>
         <button id="clearBtn">Clear</button>
       </div>
-      <button id="micBtn" style="display:none;">🎤 Voice Commands</button>
+      <div id="micBugRow">
+        <button id="micBtn" style="display:none;"><span>Voice</span><span>Commands</span></button>
+        <button id="reportBugBtn"><span>Report</span><span>a Bug</span></button>
+      </div>
       <label id="snapToggleRow">
         <span id="snapToggleLabel">Snap to Grid</span>
         <span class="switch">
@@ -658,6 +707,20 @@
   </div>
 </div>
 
+<div id="bugOverlay">
+  <div id="bugBox">
+    <div id="bugHeader">
+      <div id="bugLabel">Report a Bug</div>
+      <button id="bugCloseBtn">Close</button>
+    </div>
+    <p id="bugHint">Describe what happened - we'll get it.</p>
+    <textarea id="bugTextarea" placeholder="What went wrong?"></textarea>
+    <div id="bugActions">
+      <button id="bugSendBtn">Send</button>
+    </div>
+  </div>
+</div>
+
 <div id="privateModeOverlay">
   <div id="privateModeBox">
     <div id="privateModeLabel">Warning</div>
@@ -687,6 +750,7 @@
       <h4>Voice Commands</h4>
       <ul>
         <li>Mic button appears only if your browser supports it (not iPhone Safari).</li>
+        <li><b>Report a Bug</b> (beside it) opens your email app with a description you type, sent as a report - no address shown in the app.</li>
         <li>Say: "10 up", "25 upright", "12 down left", "undo", "new line", "circle" / "circle up" or "up circle" / "circle down" or "down circle", "snap on/off", "arc on/off", "save", "stop" (turns off listening).</li>
       </ul>
       <h4>Snap to Grid (on by default)</h4>
@@ -1113,14 +1177,37 @@
 
         // a measurement number beside each line segment, offset off the
         // line (shown for every segment, including ones with a dashed arc,
-        // which additionally get their arc-length label near the arc above)
+        // which additionally get their arc-length label near the arc above).
+        // For a segment with an arc, its length label goes on the opposite
+        // side from the arc, so the two numbers can't overlap even when the
+        // arc's height is small.
         if (showLabels) {
           sd.segs.forEach(function (s, i) {
             var p0 = screenPts[i], p1 = screenPts[i + 1];
             var mx = (p0.x + p1.x) / 2, my = (p0.y + p1.y) / 2;
             var dx = p1.x - p0.x, dy = p1.y - p0.y;
             var len = Math.sqrt(dx * dx + dy * dy) || 1;
-            var nx = -dy / len, ny = dx / len;
+            var nx, ny;
+            if (s.arc) {
+              var p0d = sd.pts[i], p1d = sd.pts[i + 1];
+              var mcx = (p0d.x + p1d.x) / 2, mcy = (p0d.y + p1d.y) / 2;
+              var cdx = p1d.x - p0d.x, cdy = p1d.y - p0d.y;
+              var clen = Math.sqrt(cdx * cdx + cdy * cdy) || 1;
+              var arcNx, arcNy;
+              if (typeof s.arcNx === "number" && typeof s.arcNy === "number") {
+                arcNx = s.arcNx; arcNy = s.arcNy;
+              } else {
+                var perpX = -cdy / clen, perpY = cdx / clen;
+                var outX = mcx - cx, outY = mcy - cy;
+                var dot = perpX * outX + perpY * outY;
+                arcNx = dot >= 0 ? perpX : -perpX;
+                arcNy = dot >= 0 ? perpY : -perpY;
+              }
+              if (s.arcFlip) { arcNx = -arcNx; arcNy = -arcNy; }
+              nx = -arcNx; ny = -arcNy; // opposite side from the arc
+            } else {
+              nx = -dy / len; ny = dx / len;
+            }
             var offset = 13;
             var lx = mx + nx * offset, ly = my + ny * offset;
             var label = formatNumber(s.value);
@@ -1575,6 +1662,9 @@
   // WebView-based app wrapper) - the button stays hidden everywhere else.
   var micBtn = document.getElementById("micBtn");
   var SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
+  // Safari (desktop or iOS) but not Chrome/Edge/Android WebView, which also
+  // include "Safari" in their UA strings alongside their own markers.
+  var isSafariBrowser = /^((?!chrome|android|crios|fxios|edg).)*safari/i.test(navigator.userAgent);
   var recognition = null;
   var listening = false;
 
@@ -1699,7 +1789,9 @@
 
   function setMicUI(isListening) {
     micBtn.classList.toggle("listening", isListening);
-    micBtn.textContent = isListening ? "● Listening - tap to stop" : "🎤 Voice Commands";
+    micBtn.innerHTML = isListening
+      ? "<span>\u25CF Listening</span><span>tap to stop</span>"
+      : "<span>Voice</span><span>Commands</span>";
   }
 
   function initRecognition() {
@@ -1717,7 +1809,7 @@
     recognition.onerror = function (e) {
       console.warn("Speech recognition error:", e.error);
       if (e.error === "not-allowed" || e.error === "service-not-allowed") {
-        showToast("Microphone access denied");
+        showToast(isSafariBrowser ? "Microphone access is denied in Safari. Try Chrome." : "Microphone access denied");
         stopListening();
       }
     };
@@ -1743,7 +1835,7 @@
   }
 
   if (SpeechRecognitionCtor) {
-    micBtn.style.display = "block";
+    micBtn.style.display = "flex";
     micBtn.addEventListener("click", function () {
       if (listening) stopListening(); else startListening();
     });
@@ -1992,6 +2084,59 @@
   });
   manualCloseBtn.addEventListener("click", function () {
     manualOverlay.style.display = "none";
+  });
+
+  // Report a Bug: opens a small form and sends it as a pre-filled email via
+  // a mailto: link - there's no backend here, so this is the only way to
+  // actually deliver it without a server. The recipient address is never
+  // rendered as visible text in the UI (built and used only at send time).
+  var reportBugBtn = document.getElementById("reportBugBtn");
+  var bugOverlay = document.getElementById("bugOverlay");
+  var bugTextarea = document.getElementById("bugTextarea");
+  var bugCloseBtn = document.getElementById("bugCloseBtn");
+  var bugSendBtn = document.getElementById("bugSendBtn");
+  var BUG_REPORT_ADDRESS = ["jordanwolff01", "gmail.com"].join("@");
+
+  reportBugBtn.addEventListener("click", function () {
+    bugOverlay.classList.add("open");
+    bugTextarea.focus();
+  });
+  bugCloseBtn.addEventListener("click", function () {
+    bugOverlay.classList.remove("open");
+    bugTextarea.value = "";
+  });
+  // Collected silently at send time only - never shown in the popup itself.
+  function collectDiagnosticInfo() {
+    var lines = [];
+    lines.push("User Agent: " + navigator.userAgent);
+    if (navigator.platform) lines.push("Platform: " + navigator.platform);
+    if (navigator.userAgentData && navigator.userAgentData.platform) {
+      lines.push("UA-Data Platform: " + navigator.userAgentData.platform);
+    }
+    lines.push("Screen: " + screen.width + "x" + screen.height + " (device pixel ratio " + (window.devicePixelRatio || 1) + ")");
+    lines.push("Viewport: " + window.innerWidth + "x" + window.innerHeight);
+    if (navigator.language) lines.push("Language: " + navigator.language);
+    return lines.join("\n");
+  }
+
+  bugSendBtn.addEventListener("click", function () {
+    var description = bugTextarea.value.trim();
+    if (!description) {
+      showToast("Please describe the bug first");
+      return;
+    }
+    var fullBody = description + "\n\n---\nDiagnostic info (auto-collected):\n" + collectDiagnosticInfo();
+    var subject = encodeURIComponent("Sketch Helper Bug Report");
+    var body = encodeURIComponent(fullBody);
+    var mailtoUrl = "mailto:" + BUG_REPORT_ADDRESS + "?subject=" + subject + "&body=" + body;
+    var link = document.createElement("a");
+    link.href = mailtoUrl;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    bugOverlay.classList.remove("open");
+    bugTextarea.value = "";
+    showToast("Opening your email app...");
   });
 
   var exportOverlay = document.getElementById("exportOverlay");
