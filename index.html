@@ -8136,6 +8136,10 @@
   // gone. It now comes back as the step remembers it. Turning this on
   // restores the blanket disarm.
   var UNDO_DISARMS_CUT = false;
+  // Undo back to a sketch with no cut lines on it puts Cut away: the lines
+  // were the whole of what it had in hand, so with the last one undone
+  // there is nothing left to cut along. Set false to keep it armed.
+  var UNDO_DISARMS_CUT_WITH_ITS_LINES = true;
   // Cut used to sit outside the disarm sweep, which is why it stayed armed
   // when another tool was armed or a new structure was started. Turning
   // this on leaves it outside again.
@@ -8535,8 +8539,16 @@
       // missing, and a disabled button never gets one.
       p2pCutBtn.disabled = false;
       p2pCutBtn.classList.toggle("addVertexOff", !pcOk);
-      p2pCutBtn.classList.toggle("p2pCutOn", !!(pcOk && p2pArmed));
-      markArmedTool(p2pCutBtn, !!(pcOk && p2pArmed));
+      // Both of Cut's jobs are armed on this one button, so both of them
+      // fill it. Only Point to Point was counted here, and this runs after
+      // the arming does - so arming Cut Lines filled the button and this
+      // emptied it again a moment later.
+      var pcHot = !!(pcOk && (p2pArmed ||
+        (typeof cutToolArmed !== "undefined" && cutToolArmed &&
+         typeof CUT_BUTTON_CHOOSES !== "undefined" && CUT_BUTTON_CHOOSES)));
+      p2pCutBtn.classList.toggle("p2pCutOn", pcHot);
+      p2pCutBtn.classList.toggle("toolOn", pcHot);
+      markArmedTool(p2pCutBtn, pcHot);
     }
 
     // Armed, it is filled: orange in the full layout, where orange is what
@@ -9639,16 +9651,20 @@
       boxLive = boxWas;
     }
     if (typeof cutToolArmed !== "undefined") {
+      var hadRays = !!(s.cutRays && s.cutRays.length);
       var wantCut = UNDO_DISARMS_CUT ? false
-        : (typeof s.cutToolArmed === "boolean" ? s.cutToolArmed
-                                               : !!(s.cutRays && s.cutRays.length));
+        : (UNDO_DISARMS_CUT_WITH_ITS_LINES && !hadRays) ? false
+        : (typeof s.cutToolArmed === "boolean" ? s.cutToolArmed : hadRays);
       if (cutToolArmed !== wantCut) {
         cutToolArmed = wantCut;
-        var cutB = document.getElementById("cutBtn");
-        if (cutB) {
+        if (!wantCut) state.cutRays = [];
+        [document.getElementById("cutBtn"),
+         document.getElementById("p2pCutBtn")].forEach(function (cutB) {
+          if (!cutB) return;
           cutB.classList.toggle("toolOn", wantCut);
+          if (cutB.id === "p2pCutBtn") cutB.classList.toggle("p2pCutOn", wantCut);
           if (typeof markArmedTool === "function") markArmedTool(cutB, wantCut);
-        }
+        });
       }
     }
     if (state.mode !== s.mode) setMode(s.mode, true);
@@ -21646,6 +21662,8 @@
   // faster. A finger that lands anywhere else is panning, and panning lets
   // nothing go: the selection is still there when the view stops moving.
   var DRAG_MOVES_SELECTION = true;
+  // Whether Cut Lines holds the corners still while it is armed.
+  var CUT_LINES_HOLDS_POINTS = true;
   var dragSel = null;
 
   // How many screen pixels one unit of the drawing takes, across and down.
@@ -22207,6 +22225,16 @@
     // One step on Undo takes the whole slide back, recorded the moment the
     // shape first moves rather than once per unit crossed.
     if (!dragSel.moved) { pushHistory(); dragSel.moved = true; }
+    // Cut Lines casts its line from the corner that is picked, so the
+    // corner has to stay where it is - sliding it carried the shape out
+    // from under the line being drawn. The press still picks the corner
+    // and still keeps it; only the slide is refused, with the buzz as its
+    // answer. Set CUT_LINES_HOLDS_POINTS false to allow it again.
+    if (CUT_LINES_HOLDS_POINTS && dragSel.kind === "point" &&
+        typeof cutToolArmed !== "undefined" && cutToolArmed) {
+      if (!dragSel.saidNo) { buzz(); dragSel.saidNo = true; }
+      return;
+    }
     var ok = dragSel.kind === "point"
       ? movePointByUnits(stepX, stepY, { noHistory: true })
       : moveAreaByUnits(stepX, stepY, { noHistory: true });
