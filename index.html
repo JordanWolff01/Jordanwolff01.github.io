@@ -1589,6 +1589,10 @@
   }
   #arcFractionActions { display: flex; gap: 8px; }
   #angleActions { display: flex; gap: 8px; }
+
+  /* The four numbered buttons are off the sheet: the labels on the diagram
+     are what is tapped now. Drop this rule to have them back. */
+  #angleActions { display: none; }
   #settingsActions button,
   #arcFractionActions button,
   #angleActions button {
@@ -6227,8 +6231,13 @@
           ' stroke-width="1" pointer-events="none"/>';
       }
     }
-    if (typeof pendingNewAreaAt !== "undefined" && pendingNewAreaAt) {
-      var naS = toScreen(pendingNewAreaAt);
+    var naAt = (typeof pendingNewAreaAt !== "undefined" && pendingNewAreaAt)
+      ? pendingNewAreaAt
+      // New Structure is not waiting, but a corner is picked with a tool
+      // armed that would open an area there: same dot, same meaning.
+      : (typeof newAreaStartMark === "function" ? newAreaStartMark() : null);
+    if (naAt) {
+      var naS = toScreen(naAt);
       svg += '<circle cx="' + naS.x.toFixed(2) + '" cy="' + naS.y.toFixed(2) +
         '" r="' + ((size <= 80 ? 2 : 3.5) + 0.8) +
         '" fill="' + START_COLOR + '" stroke="' + START_COLOR +
@@ -6479,6 +6488,11 @@
   function addAreaNeedsAStart() {
     if (!ADD_AREA_SAYS_NEW_STRUCTURE) return false;
     if (state.mode === "cut") return false;
+    // New Structure is already holding the spot the next area starts from,
+    // so there is nothing to ask for: an arrow draws from there, tapped or
+    // held. Without this the hold sent the user off to tap New Structure
+    // when they had just tapped it.
+    if (typeof pendingNewAreaAt !== "undefined" && pendingNewAreaAt) return false;
     if (!(typeof p2pDrawArmed !== "undefined" && p2pDrawArmed) &&
         !(typeof addVertexArmed !== "undefined" && addVertexArmed)) return false;
     if (state.cutVertexIdx !== null) return false;
@@ -6486,6 +6500,46 @@
     var naMeta = findStructureMeta(state.currentStructure);
     if (!naMeta || !structureHasClosedShape(naMeta)) return false;
     return !structureHasOpenShape(naMeta);
+  }
+  // Cut Lines armed with no corner chosen: a held arrow has nothing to
+  // cast a line from, so it says what a tapped arrow says - a buzz and the
+  // same words - rather than opening a sheet of angles none of which could
+  // be used. Matches the Add Area rule just above it.
+  var CUT_HOLD_ASKS_FOR_A_POINT = true;
+  function cutNeedsAPoint() {
+    if (!CUT_HOLD_ASKS_FOR_A_POINT) return false;
+    if (!(cutToolArmed || state.mode === "cut")) return false;
+    return cutOriginIdx() === null;
+  }
+  function sayPickAPointToCutFrom() {
+    buzz(15);
+    showToast("Select a point first");
+  }
+  // Where a new area would start right now: the corner that is picked,
+  // while a tool that opens an area from a corner is armed. Drawn as the
+  // red dot, so the sketch says where the next wall will come from before
+  // the wall is drawn rather than after it. The test matches the one the
+  // arrows themselves use, so the dot cannot promise a start the arrow
+  // would not take.
+  var RED_DOT_ON_THE_PICKED_START = true;
+  function newAreaStartMark() {
+    if (!RED_DOT_ON_THE_PICKED_START) return null;
+    if (state.mode === "cut" || cutToolArmed) return null;
+    if (state.cutVertexIdx === null || state.cutVertexIdx === undefined) return null;
+    var nmMeta = findStructureMeta(state.currentStructure);
+    if (!nmMeta) return null;
+    var nmSd = getStructurePointsList(state.segments, [nmMeta])[0];
+    if (!nmSd) return null;
+    var nmHas = !!((nmSd.pts && nmSd.pts.length > 1) ||
+                   (nmSd.extraLoops && nmSd.extraLoops.length));
+    var nmStarts = (typeof addVertexArmed !== "undefined" && addVertexArmed) ||
+      (typeof p2pDrawArmed !== "undefined" && p2pDrawArmed &&
+       nmHas && !structureHasOpenShape(nmMeta));
+    if (!nmStarts) return null;
+    var nmLoops = [nmSd.pts].concat(nmSd.extraLoops || []);
+    var nmLp = nmLoops[state.cutLoopIdx || 0] || nmSd.pts;
+    var nmPt = nmLp && nmLp[state.cutVertexIdx];
+    return nmPt ? { x: nmPt.x, y: nmPt.y } : null;
   }
   function sayPickAStartPoint() {
     var psMeta = findStructureMeta(state.currentStructure);
@@ -6844,6 +6898,7 @@
       // angle to offer, so the hold stays out of the way - here too.
       if (typeof moveArmed !== "undefined" && moveArmed) return;
       e.preventDefault();
+      if (cutNeedsAPoint()) { sayPickAPointToCutFrom(); return; }
       openAngleDialog(hDir);
       return;
     }
@@ -7125,33 +7180,124 @@
     };
   }
 
+  // The four angles are chosen on the diagram itself: each dotted line is
+  // labelled with the turn it takes - +15, +30, -15, -30 - and that label
+  // is what the finger lands on. The row of numbered buttons underneath
+  // said the same thing twice and said it in numbers that meant nothing
+  // on their own; it is still in the markup, hidden by one CSS line.
+  var ANGLE_TAPS_THE_LABEL = true;
+  // The sign on an angle says what it does to the corner, not which way
+  // the maths turned: + opens the corner between the wall before it and
+  // this one, - closes it. The first wall of an area has no corner behind
+  // it, so it gets no sign at all.
+  var ANGLE_SIGN_FROM_THE_CORNER = true;
+  function cornerAngleBetween(into, out) {
+    // What a protractor laid on the corner would read: the wall arriving
+    // is turned around, so both arms point away from the corner.
+    var ax = -into.dx, ay = -into.dy;
+    var dot = ax * out.dx + ay * out.dy;
+    var cross = ax * out.dy - ay * out.dx;
+    return Math.abs(Math.atan2(cross, dot)) * 180 / Math.PI;
+  }
+  function unitBetween(a, b) {
+    if (!a || !b) return null;
+    var dx = b.x - a.x, dy = b.y - a.y;
+    var m = Math.sqrt(dx * dx + dy * dy);
+    if (!m) return null;
+    return { dx: dx / m, dy: dy / m };
+  }
+  function wallBeforeThisOne() {
+    // The wall the new one leaves from, pointing the way it was drawn.
+    try {
+      if (cutToolArmed || state.mode === "cut") {
+        // A cut starts on a corner of a finished shape, so the wall behind
+        // it is the one arriving at that corner.
+        var loop = activeStructureLoop(), ci = cutOriginIdx();
+        if (!loop || ci === null) return null;
+        var ring = ringWithoutClose(loop);
+        if (ring.length < 2) return null;
+        var at = ((ci % ring.length) + ring.length) % ring.length;
+        return unitBetween(ring[(at - 1 + ring.length) % ring.length], ring[at]);
+      }
+      var meta = findStructureMeta(state.currentStructure);
+      var lp = meta ? openLoopOf(meta) : null;
+      if (!lp || lp.length < 2) return null;   // nothing open, or one point only
+      return unitBetween(lp[lp.length - 2], lp[lp.length - 1]);
+    } catch (e) { return null; }
+  }
+  function angleSignFor(dirKey, deg, before) {
+    if (!ANGLE_SIGN_FROM_THE_CORNER) return deg > 0 ? "+" : "−";
+    if (!before) return "";
+    var d = DIRS[dirKey];
+    var plain = cornerAngleBetween(before, { dx: d.dx, dy: d.dy });
+    var turned = cornerAngleBetween(before, rotatedUnit(dirKey, deg));
+    if (Math.abs(turned - plain) < 1e-9) return "";
+    return turned > plain ? "+" : "−";
+  }
   function buildAngleDiagram(dirKey) {
     var d = DIRS[dirKey];
-    var cx = 110, cy = 80, R = 62;
-    var s = '<svg viewBox="0 0 220 160" width="220" height="160">';
-    // the arrow itself
-    var ax = cx + d.dx * R, ay = cy + d.dy * R;
-    s += '<line x1="' + cx + '" y1="' + cy + '" x2="' + ax.toFixed(1) + '" y2="' + ay.toFixed(1) +
-         '" stroke="' + THEME.blue + '" stroke-width="3" stroke-linecap="round"/>';
-    s += '<circle cx="' + cx + '" cy="' + cy + '" r="4" fill="' + THEME.blue + '"/>';
-    // four dotted lines fanning out from the same base
+    // The 30s keep the old reach. The middle line and the 15s run further
+    // out, which is what pulls their buttons clear of the 30s beside them
+    // - they are only 15 degrees apart, so distance is the only room to
+    // be had. Nothing here tries to keep the base dot in the middle: the
+    // view is cut to fit whatever the fan came to, so the picture sits
+    // wherever it needs to.
+    var R = 96;
+    var FAR = R + 54;
+    var CHIP = 27;
+    // Blue like the rest of the drawing, except on a cut, where the whole
+    // cut language is orange.
+    var LINE = (cutToolArmed || state.mode === "cut") ? THEME.orange : THEME.blue;
+    var before = wallBeforeThisOne();
+    var lo = { x: -8, y: -8 }, hi = { x: 8, y: 8 };
+    var see = function (x, y, pad) {
+      lo.x = Math.min(lo.x, x - pad); hi.x = Math.max(hi.x, x + pad);
+      lo.y = Math.min(lo.y, y - pad); hi.y = Math.max(hi.y, y + pad);
+    };
+    var parts = [];
+    var tipX = d.dx * FAR, tipY = d.dy * FAR;
+    see(tipX, tipY, 4);
     Object.keys(ANGLE_OFFSETS).forEach(function (k) {
       var deg = ANGLE_OFFSETS[k], rad = deg * Math.PI / 180;
       var rx = d.dx * Math.cos(rad) - d.dy * Math.sin(rad);
       var ry = d.dx * Math.sin(rad) + d.dy * Math.cos(rad);
-      var ex = cx + rx * R, ey = cy + ry * R;
-      // an angle that can't produce a usable cut line is shown greyed out
-      var col = angleUsable(dirKey, deg) ? THEME.orange : THEME.dialOff;
-      s += '<line x1="' + cx + '" y1="' + cy + '" x2="' + ex.toFixed(1) + '" y2="' + ey.toFixed(1) +
-           '" stroke="' + col + '" stroke-width="2" stroke-dasharray="4 4" stroke-linecap="round"/>';
-      var lx = cx + rx * (R + 14), ly = cy + ry * (R + 14);
-      s += '<text x="' + lx.toFixed(1) + '" y="' + (ly + 4).toFixed(1) +
-           '" text-anchor="middle" font-family="ui-monospace,monospace" font-size="13" font-weight="700" fill="' + col + '">' + k + '</text>';
+      var len = Math.abs(deg) > 20 ? R : FAR;
+      var ex = rx * len, ey = ry * len;          // where the dashes stop
+      var lx = rx * (len + CHIP), ly = ry * (len + CHIP);  // the button sits on the end
+      var live = angleUsable(dirKey, deg);
+      var col = live ? LINE : THEME.dialOff;
+      var what = angleSignFor(dirKey, deg, before) + Math.abs(deg) + "°";
+      see(lx, ly, CHIP + 2);
+      parts.push({ k: k, col: col, ex: ex, ey: ey, lx: lx, ly: ly, what: what, live: live });
+    });
+    var w = hi.x - lo.x, h = hi.y - lo.y;
+    var f = function (n) { return (Math.round(n * 10) / 10).toString(); };
+    // Drawn at its own size, shrunk only if it would be wider than the sheet.
+    var shown = Math.min(w, 300);
+    var s = '<svg viewBox="' + f(lo.x) + ' ' + f(lo.y) + ' ' + f(w) + ' ' + f(h) +
+            '" width="' + f(shown) + '" height="' + f(h * shown / w) + '">';
+    parts.forEach(function (q) {
+      s += '<line x1="0" y1="0" x2="' + f(q.ex) + '" y2="' + f(q.ey) +
+           '" stroke="' + q.col + '" stroke-width="2" stroke-dasharray="4 4" stroke-linecap="round"/>';
+    });
+    // the arrow itself, over the fan
+    s += '<line x1="0" y1="0" x2="' + f(tipX) + '" y2="' + f(tipY) +
+         '" stroke="' + THEME.blue + '" stroke-width="3" stroke-linecap="round"/>';
+    s += '<circle cx="0" cy="0" r="4" fill="' + THEME.blue + '"/>';
+    parts.forEach(function (q) {
+      // A round chip, so the angle reads as something to press rather than
+      // a number printed beside a line.
+      s += '<circle class="angleHit"' + (ANGLE_TAPS_THE_LABEL ? ' data-angle="' + q.k + '"' : '') +
+           ' cx="' + f(q.lx) + '" cy="' + f(q.ly) + '" r="' + CHIP + '" fill="' + THEME.pill +
+           '" stroke="' + q.col + '" stroke-width="2"' +
+           (q.live && ANGLE_TAPS_THE_LABEL ? ' style="cursor:pointer"' : ' pointer-events="none"') + '/>';
+      s += '<text x="' + f(q.lx) + '" y="' + f(q.ly + 5) +
+           '" text-anchor="middle" font-family="ui-monospace,monospace" font-size="15" ' +
+           'font-weight="700" pointer-events="none" fill="' + q.col + '">' + q.what + '</text>';
     });
     s += "</svg>";
     return s;
   }
-
   function openAngleDialog(dirKey) {
     angleDir = dirKey;
     document.getElementById("angleDiagram").innerHTML = buildAngleDiagram(dirKey);
@@ -7188,9 +7334,8 @@
   document.getElementById("angleCloseBtn").addEventListener("click", function () {
     angleOverlay.classList.remove("open");
   });
-  document.querySelectorAll(".angleBtn").forEach(function (b) {
-    b.addEventListener("click", function () {
-      var deg = ANGLE_OFFSETS[b.getAttribute("data-angle")];
+  function chooseAngle(deg) {
+    {
       angleOverlay.classList.remove("open");
       if (!angleDir) return;
       // Cut armed - the tool, or the mode it used to be - takes the angle
@@ -7209,8 +7354,27 @@
         addAngledSegment(legs);
       }
       angleDir = null;
+    }
+  }
+  // The labels on the diagram, and the hidden row of buttons behind them.
+  (function () {
+    var diagram = document.getElementById("angleDiagram");
+    if (diagram) {
+      diagram.addEventListener("click", function (e) {
+        var hit = e.target && e.target.closest ? e.target.closest(".angleHit") : null;
+        if (!hit) return;
+        var deg = ANGLE_OFFSETS[hit.getAttribute("data-angle")];
+        if (typeof deg !== "number") return;
+        if (angleDir && !angleUsable(angleDir, deg)) return;   // greyed: no tap
+        chooseAngle(deg);
+      });
+    }
+    document.querySelectorAll(".angleBtn").forEach(function (b) {
+      b.addEventListener("click", function () {
+        chooseAngle(ANGLE_OFFSETS[b.getAttribute("data-angle")]);
+      });
     });
-  });
+  })();
 
   // Draw Mode: one straight line on screen, exported as its two legs.
   function addAngledSegment(legs) {
@@ -7415,6 +7579,26 @@
     return !poInRing(mid, loop);
   }
 
+  // Takes the newest dashed line off the sketch and gives the one it was
+  // drawn onto its full reach back - the line it joined was shortened
+  // where the two met, and that shortening is recorded on it. Drawing a
+  // second line from the same corner already did this; Undo wants exactly
+  // the same thing, so both ask here rather than keeping two copies of it.
+  function dropNewestCutRay() {
+    if (!state.cutRays || !state.cutRays.length) return false;
+    var dropped = state.cutRays.pop();
+    if (state.cutRays.length && dropped) {
+      var restore = state.cutRays[state.cutRays.length - 1];
+      if (state.cutRays.length === 1 && typeof restore._prevLength === "number") {
+        restore.length = restore._prevLength;
+        delete restore._prevLength; delete restore.trimPoint; delete restore.trimDir;
+      } else {
+        restore.fromT = restore._prevFromT || 0;
+      }
+      delete restore.nearTrimPoint; delete restore.nearTrimDir;
+    }
+    return true;
+  }
   function acceptCutRay(candidate) {
     // Refused without a word: the line would sit on the outline, where
     // there is nothing to see and nothing to be gained.
@@ -7429,17 +7613,7 @@
     }
     if (state.cutRays.length &&
         state.cutRays[state.cutRays.length - 1].startIdx === candidate.startIdx) {
-      var dropped = state.cutRays.pop();
-      if (state.cutRays.length && dropped) {
-        var restore = state.cutRays[state.cutRays.length - 1];
-        if (state.cutRays.length === 1 && typeof restore._prevLength === "number") {
-          restore.length = restore._prevLength;
-          delete restore._prevLength; delete restore.trimPoint; delete restore.trimDir;
-        } else {
-          restore.fromT = restore._prevFromT || 0;
-        }
-        delete restore.nearTrimPoint; delete restore.nearTrimDir;
-      }
+      dropNewestCutRay();
     }
     if (state.cutRays.length) {
       var prev = state.cutRays[state.cutRays.length - 1];
@@ -7735,6 +7909,11 @@
     if (padEl) {
       // The outline only ever promises a hold that acts, so it follows the
       // same rule the hold itself does.
+      // Left reading arrowsWouldDraw() alone. The hold also refuses when
+      // Add Area has nowhere to start and when Cut Lines has no corner
+      // picked, but neither of those repaints the marks as it changes, so
+      // testing them here only produced a mark stuck off after a corner
+      // WAS picked. Both refusals say so in words instead.
       var arrowHolds = arrowsWouldDraw();
       padEl.querySelectorAll(".arrowBtn").forEach(function (b) {
         b.classList.toggle("holdReady",
@@ -8142,6 +8321,15 @@
   // were the whole of what it had in hand, so with the last one undone
   // there is nothing left to cut along. Set false to keep it armed.
   var UNDO_DISARMS_CUT_WITH_ITS_LINES = true;
+  // A dashed cut line is not part of the sketch - nothing is cut until Cut
+  // is tapped - and drawing one records no history step, so a step back
+  // used to walk straight past it into the drawing underneath and reopen
+  // the area that was closed before the cut was started. Undo takes the
+  // line instead, and the last one takes the tool with it.
+  var UNDO_TAKES_THE_CUT_LINE = true;
+  // Declared up here with the other cut flags rather than beside the undo
+  // it belongs to: the button painter reads it, and that runs long before
+  // a line further down the file would have been assigned.
   // Cut used to sit outside the disarm sweep, which is why it stayed armed
   // when another tool was armed or a new structure was started. Turning
   // this on leaves it outside again.
@@ -8972,6 +9160,8 @@
           // to put an angle on, so the hold says what the tap says rather
           // than opening the sheet over a question nobody has answered.
           if (addAreaNeedsAStart()) { openedByHold = true; sayPickAStartPoint(); return; }
+          // Cut Lines armed, but no corner picked to cut from.
+          if (cutNeedsAPoint()) { openedByHold = true; sayPickAPointToCutFrom(); return; }
           openedByHold = true;
           openAngleDialog(dir);
         });
@@ -9763,6 +9953,17 @@
   }
 
   function historyUndo() {
+    if (UNDO_TAKES_THE_CUT_LINE && state.cutRays && state.cutRays.length) {
+      dropNewestCutRay();
+      if (!state.cutRays.length && cutToolArmed) {
+        setCutToolArmed(false);   // paints the button, clears up and repaints
+      } else {
+        if (typeof markCutButton === "function") markCutButton();
+        renderCanvas();
+        updateUndoClearState();
+      }
+      return;
+    }
     if (!historyPast.length) { showToast("Nothing to undo"); return; }
     var wasSig = viewSignature();
     var leaving = snapshotState();
@@ -9872,7 +10073,8 @@
     var globalEmpty = !sketchHasContent();
     var last = getActiveStructureLastSegment();
     var activeEmpty = last === null;
-    undoBtn.disabled = !historyPast.length;
+    undoBtn.disabled = !historyPast.length &&
+      !(UNDO_TAKES_THE_CUT_LINE && state.cutRays && state.cutRays.length);
     if (redoBtn) redoBtn.disabled = !historyFuture.length;
     clearBtn.disabled = GREYED_BUTTONS_GO_QUIET ? globalEmpty : false;
     clearBtn.classList.toggle("emptyOff", globalEmpty);
